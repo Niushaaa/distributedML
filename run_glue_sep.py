@@ -125,7 +125,7 @@ def train(args, train_dataset, model, tokenizer):
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            start_time = time.time()
+            start_iter_time = time.time()
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
@@ -187,13 +187,22 @@ def train(args, train_dataset, model, tokenizer):
                 model.zero_grad()
                 global_step += 1
 
-            # Record average iteration time for the first 40 iterations
-            if step < 40:
-                sum_elapsed_time += time.time() - start_time
-                print(f"Elapsed time for {step} iterations: {sum_elapsed_time}")
-            # Record the loss values of the first five minibatches by printing the loss value after every iteration
-            if step <= 5:
-                print(f"Loss value after iteration {step}: {loss}")
+            # Record the time taken for the iteration
+            current_iter_time = time.time() - start_iter_time
+
+            iteration_times.append(current_iter_time)
+            communication_times.append(current_comm_time)
+            communication_times.append(current_comp_time)
+            loss_values.append(loss.item())
+            ratios.append((current_comm_time + current_comp_time) / current_iter_time if current_iter_time != 0 else 0)
+
+            # Write data to file
+            # Open a file to write the data
+            with open("training_time.txt", "a") as file:
+                file.write(f"{current_comm_time}, {current_comp_time}, {(current_comm_time + current_comp_time) / current_iter_time}, {loss.item()}\n")
+
+            print(f"Elapsed time for {step} iterations: {sum_elapsed_time}")
+            print(f"Loss value after iteration {step}: {loss}")
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
