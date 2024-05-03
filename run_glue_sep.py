@@ -201,7 +201,7 @@ def train(args, train_dataset, model, tokenizer):
             with open("training_time.txt", "a") as file:
                 file.write(f"{current_comm_time}, {current_comp_time}, {(current_comm_time + current_comp_time) / current_iter_time}, {loss.item()}\n")
 
-            print(f"Elapsed time for {step} iterations: {sum_iter_time}")
+            print(f"Elapsed time for {step} iterations: {current_iter_time}")
             print(f"Loss value after iteration {step}: {loss}")
 
             if args.max_steps > 0 and global_step > args.max_steps:
