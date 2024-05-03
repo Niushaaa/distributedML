@@ -200,16 +200,6 @@ def train(args, train_dataset, model, tokenizer):
         evaluate(args, model, tokenizer, prefix="")
         ##################################################
 
-    # Plotting the data after training
-    plt.figure(figsize=(10, 7))
-    plt.plot(iteration_times, label='Sum Iteration Time')
-    plt.plot(communication_times, label='Sum Communication Time')
-    plt.plot(ratios, label='Ratio of Communication to Iteration Time')
-    plt.xlabel('Iteration')
-    plt.ylabel('Time (s)')
-    plt.title('Training Time Analysis')
-    plt.legend()
-    plt.show()
     return global_step, tr_loss / global_step
 
 
