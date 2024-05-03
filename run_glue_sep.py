@@ -109,30 +109,20 @@ def train(args, train_dataset, model, tokenizer):
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
-    current_comm_time = 0
-    current_iter_time = 0
-    sum_comm_time = 0
-    sum_iter_time = 0
-    iteration_times = []
-    communication_times = []
-    loss_values = []
-    ratios = []
-
+    sum_elapsed_time = 0
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
-
     for _ in train_iterator:
         epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
         for step, batch in enumerate(epoch_iterator):
-            start_iter_time = time.time()
-
+            start_time = time.time()
             model.train()
             batch = tuple(t.to(args.device) for t in batch)
             inputs = {'input_ids':      batch[0],
-                    'attention_mask': batch[1],
-                    'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
-                    'labels':         batch[3]}
+                      'attention_mask': batch[1],
+                      'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
+                      'labels':         batch[3]}
             outputs = model(**inputs)
             loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
@@ -151,13 +141,23 @@ def train(args, train_dataset, model, tokenizer):
                 torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
             torch.distributed.barrier()
-            start_comm_time = time.time()
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
-                torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.MIN)
+                # Gather gradients
+                if torch.distributed.get_rank() == 0:
+                    gathered_grads = [torch.zeros_like(param.grad.data) for _ in range(4)]
+                    torch.distributed.gather(param.grad.data, gather_list=gathered_grads, dst=0)
+                else:
+                    torch.distributed.gather(param.grad.data, dst=0)
+                # Average gradients then scatter
+                if torch.distributed.get_rank() == 0:
+                    averaged_grads = torch.mean(torch.stack(gathered_grads), dim=0)
+                    scatter_list = [averaged_grads for _ in range(4)]
+                    torch.distributed.scatter(param.grad.data, scatter_list=scatter_list, src=0)
+                else:
+                    torch.distributed.scatter(param.grad.data, src=0)
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
-            current_comm_time = time.time() - start_comm_time
 
             tr_loss += loss.item()
             if (step + 1) % args.gradient_accumulation_steps == 0:
@@ -169,24 +169,13 @@ def train(args, train_dataset, model, tokenizer):
                 model.zero_grad()
                 global_step += 1
 
-            # Tracking and recording times
-            current_iter_time = time.time() - start_iter_time
-            sum_iter_time += current_iter_time
-            sum_comm_time += current_comm_time
-            iteration_times.append(sum_iter_time)
-            communication_times.append(sum_comm_time)
-            loss_values.append(loss.item())
-            ratios.append(sum_comm_time / sum_iter_time if sum_iter_time != 0 else 0)
-
-            # Write data to file
-            # Open a file to write the data
-            with open("training_time.txt", "a") as file:
-                file.write(f"{sum_iter_time}, {sum_comm_time}, {sum_comm_time / sum_iter_time}, {loss.item()}\n")
-
-            print(f"Elapsed time for {step} iterations: {sum_iter_time}")
-            print(f"Communication time for {step} iterations: {sum_comm_time}")
+            # Record average iteration time for the first 40 iterations
+            if step < 40:
+                sum_elapsed_time += time.time() - start_time
+                print(f"Elapsed time for {step} iterations: {sum_elapsed_time}")
             # Record the loss values of the first five minibatches by printing the loss value after every iteration
-            print(f"Loss value after iteration {step}: {loss}")
+            if step <= 5:
+                print(f"Loss value after iteration {step}: {loss}")
 
             if args.max_steps > 0 and global_step > args.max_steps:
                 epoch_iterator.close()
