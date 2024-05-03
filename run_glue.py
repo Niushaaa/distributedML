@@ -154,7 +154,7 @@ def train(args, train_dataset, model, tokenizer):
             start_comm_time = time.time()
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
-                torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.MIN)
+                torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.SUM)
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
             current_comm_time = time.time() - start_comm_time

@@ -109,7 +109,16 @@ def train(args, train_dataset, model, tokenizer):
 
     global_step = 0
     tr_loss, logging_loss = 0.0, 0.0
-    sum_elapsed_time = 0
+    
+    current_comm_time = 0
+    current_comp_time = 0
+    current_iter_time = 0
+    iteration_times = []
+    communication_times = []
+    computation_times = []
+    loss_values = []
+    ratios = []
+
     model.zero_grad()
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
@@ -144,18 +153,27 @@ def train(args, train_dataset, model, tokenizer):
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
                 # Gather gradients
+                start_comm_time = time.time()
                 if torch.distributed.get_rank() == 0:
                     gathered_grads = [torch.zeros_like(param.grad.data) for _ in range(4)]
                     torch.distributed.gather(param.grad.data, gather_list=gathered_grads, dst=0)
+                    current_comm_time = time.time() - start_comm_time
                 else:
                     torch.distributed.gather(param.grad.data, dst=0)
+                    current_comm_time = time.time() - start_comm_time
                 # Average gradients then scatter
                 if torch.distributed.get_rank() == 0:
+                    start_comp_time = time.time()
                     averaged_grads = torch.mean(torch.stack(gathered_grads), dim=0)
+                    current_comp_time = time.time() - start_comp_time
+                    start_comm_time = time.time()
                     scatter_list = [averaged_grads for _ in range(4)]
                     torch.distributed.scatter(param.grad.data, scatter_list=scatter_list, src=0)
+                    current_comm_time += time.time() - start_comm_time
                 else:
+                    start_comm_time = time.time()
                     torch.distributed.scatter(param.grad.data, src=0)
+                    current_comm_time += time.time() - start_comm_time
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
 
