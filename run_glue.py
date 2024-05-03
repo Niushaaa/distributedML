@@ -122,96 +122,95 @@ def train(args, train_dataset, model, tokenizer):
     train_iterator = trange(int(args.num_train_epochs), desc="Epoch", disable=args.local_rank not in [-1, 0])
     set_seed(args)  # Added here for reproductibility (even between python 2 and 3)
 
-    # Open a file to write the data
-    with open('training_data.txt', 'w') as file:
-        for _ in train_iterator:
-            epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
-            for step, batch in enumerate(epoch_iterator):
-                start_iter_time = time.time()
+    for _ in train_iterator:
+        epoch_iterator = tqdm(train_dataloader, desc="Iteration", disable=args.local_rank not in [-1, 0])
+        for step, batch in enumerate(epoch_iterator):
+            start_iter_time = time.time()
 
-                model.train()
-                batch = tuple(t.to(args.device) for t in batch)
-                inputs = {'input_ids':      batch[0],
-                        'attention_mask': batch[1],
-                        'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
-                        'labels':         batch[3]}
-                outputs = model(**inputs)
-                loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
+            model.train()
+            batch = tuple(t.to(args.device) for t in batch)
+            inputs = {'input_ids':      batch[0],
+                    'attention_mask': batch[1],
+                    'token_type_ids': batch[2] if args.model_type in ['bert', 'xlnet'] else None,  # XLM don't use segment_ids
+                    'labels':         batch[3]}
+            outputs = model(**inputs)
+            loss = outputs[0]  # model outputs are always tuple in pytorch-transformers (see doc)
 
-                if args.gradient_accumulation_steps > 1:
-                    loss = loss / args.gradient_accumulation_steps
+            if args.gradient_accumulation_steps > 1:
+                loss = loss / args.gradient_accumulation_steps
 
-                if args.fp16:
-                    with amp.scale_loss(loss, optimizer) as scaled_loss:
-                        scaled_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
-                else:
-                    ##################################################
-                    # TODO(cos598d): perform backward pass here
-                    loss.backward()
-                    ##################################################
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
+            if args.fp16:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+                torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.max_grad_norm)
+            else:
+                ##################################################
+                # TODO(cos598d): perform backward pass here
+                loss.backward()
+                ##################################################
+                torch.nn.utils.clip_grad_norm_(model.parameters(), args.max_grad_norm)
 
-                torch.distributed.barrier()
-                start_comm_time = time.time()
-                # Gradient synchronization
-                for i, param in enumerate(model.parameters()):
-                    torch.distributed.all_reduce(param.grad.data)
-                    
-                torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
-                current_comm_time = time.time() - start_comm_time
+            torch.distributed.barrier()
+            start_comm_time = time.time()
+            # Gradient synchronization
+            for i, param in enumerate(model.parameters()):
+                torch.distributed.all_reduce(param.grad.data)
+                
+            torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
+            current_comm_time = time.time() - start_comm_time
 
-                tr_loss += loss.item()
-                if (step + 1) % args.gradient_accumulation_steps == 0:
-                    scheduler.step()  # Update learning rate schedule
-                    ##################################################
-                    # TODO(cos598d): perform a single optimization step (parameter update) by invoking the optimizer
-                    optimizer.step()
-                    ##################################################
-                    model.zero_grad()
-                    global_step += 1
+            tr_loss += loss.item()
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                scheduler.step()  # Update learning rate schedule
+                ##################################################
+                # TODO(cos598d): perform a single optimization step (parameter update) by invoking the optimizer
+                optimizer.step()
+                ##################################################
+                model.zero_grad()
+                global_step += 1
 
-                # Record average iteration time for the first 40 iterations
-                # Tracking and recording times
-                current_iter_time = time.time() - start_iter_time
-                sum_iter_time += current_iter_time
-                sum_comm_time += current_comm_time
-                iteration_times.append(sum_iter_time)
-                communication_times.append(sum_comm_time)
-                loss_values.append(loss.item())
-                ratios.append(sum_comm_time / sum_iter_time if sum_iter_time != 0 else 0)
+            # Tracking and recording times
+            current_iter_time = time.time() - start_iter_time
+            sum_iter_time += current_iter_time
+            sum_comm_time += current_comm_time
+            iteration_times.append(sum_iter_time)
+            communication_times.append(sum_comm_time)
+            loss_values.append(loss.item())
+            ratios.append(sum_comm_time / sum_iter_time if sum_iter_time != 0 else 0)
 
-                # Write data to file
+            # Write data to file
+            # Open a file to write the data
+            with open("training_time.txt", "a") as file:
                 file.write(f"{sum_iter_time}, {sum_comm_time}, {sum_comm_time / sum_iter_time}, {loss.item()}\n")
 
-                print(f"Elapsed time for {step} iterations: {sum_iter_time}")
-                print(f"Communication time for {step} iterations: {sum_comm_time}")
-                # Record the loss values of the first five minibatches by printing the loss value after every iteration
-                print(f"Loss value after iteration {step}: {loss}")
+            print(f"Elapsed time for {step} iterations: {sum_iter_time}")
+            print(f"Communication time for {step} iterations: {sum_comm_time}")
+            # Record the loss values of the first five minibatches by printing the loss value after every iteration
+            print(f"Loss value after iteration {step}: {loss}")
 
-                if args.max_steps > 0 and global_step > args.max_steps:
-                    epoch_iterator.close()
-                    break
             if args.max_steps > 0 and global_step > args.max_steps:
-                train_iterator.close()
+                epoch_iterator.close()
                 break
-            
-            ##################################################
-            # TODO(cos598d): call evaluate() here to get the model performance after every epoch.
-            evaluate(args, model, tokenizer, prefix="")
-            ##################################################
+        if args.max_steps > 0 and global_step > args.max_steps:
+            train_iterator.close()
+            break
+        
+        ##################################################
+        # TODO(cos598d): call evaluate() here to get the model performance after every epoch.
+        evaluate(args, model, tokenizer, prefix="")
+        ##################################################
 
-        # Plotting the data after training
-        plt.figure(figsize=(10, 7))
-        plt.plot(iteration_times, label='Sum Iteration Time')
-        plt.plot(communication_times, label='Sum Communication Time')
-        plt.plot(ratios, label='Ratio of Communication to Iteration Time')
-        plt.xlabel('Iteration')
-        plt.ylabel('Time (s)')
-        plt.title('Training Time Analysis')
-        plt.legend()
-        plt.show()
-        return global_step, tr_loss / global_step
+    # Plotting the data after training
+    plt.figure(figsize=(10, 7))
+    plt.plot(iteration_times, label='Sum Iteration Time')
+    plt.plot(communication_times, label='Sum Communication Time')
+    plt.plot(ratios, label='Ratio of Communication to Iteration Time')
+    plt.xlabel('Iteration')
+    plt.ylabel('Time (s)')
+    plt.title('Training Time Analysis')
+    plt.legend()
+    plt.show()
+    return global_step, tr_loss / global_step
 
 
 def evaluate(args, model, tokenizer, prefix=""):
