@@ -3,6 +3,8 @@
 Input must be a pytorch tensor
 **********************************************
 '''
+import torch
+import numpy as np
 
 def quantize(x,input_compress_settings={}):
     compress_settings={'n':6}
