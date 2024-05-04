@@ -47,6 +47,8 @@ from pytorch_transformers import AdamW, WarmupLinearSchedule
 from utils_glue import (compute_metrics, convert_examples_to_features,
                         output_modes, processors)
 
+from utils_quant import quantize
+
 logger = logging.getLogger(__name__)
 
 ALL_MODELS = sum((tuple(conf.pretrained_config_archive_map.keys()) for conf in (BertConfig, XLNetConfig, XLMConfig, RobertaConfig)), ())
@@ -154,8 +156,7 @@ def train(args, train_dataset, model, tokenizer):
             start_comm_time = time.time()
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
-                model.parameters().grad.data = quantize(model.parameters().grad.data)
-                torch.distributed.all_reduce(param.grad.data, op=torch.distributed.ReduceOp.SUM)
+                torch.distributed.all_reduce(quantize(param.grad.data), op=torch.distributed.ReduceOp.SUM)
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
             current_comm_time = time.time() - start_comm_time
