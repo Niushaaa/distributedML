@@ -47,7 +47,7 @@ from pytorch_transformers import AdamW, WarmupLinearSchedule
 from utils_glue import (compute_metrics, convert_examples_to_features,
                         output_modes, processors)
 
-from utils_quant import quantize
+from utils_quant import (quantize, one_bit)
 
 logger = logging.getLogger(__name__)
 
