@@ -157,16 +157,16 @@ def train(args, train_dataset, model, tokenizer):
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
                 # print the tensor size and type
-                print("----size and type of the tensor")
-                print(param.grad.data.size())
-                print(param.grad.data.dtype)
-                print("size and type of the tensor----")
-                print("----size and type of the QUANTIZED tensor")
-                print(one_bit(param.grad.data).type(torch.bool).size())
-                print(one_bit(param.grad.data).type(torch.bool).dtype)
-                print("size and type of the QUANTIZED tensor----")
+                # print("----size and type of the tensor")
+                # print(param.grad.data.size())
+                # print(param.grad.data.dtype)
+                # print("size and type of the tensor----")
+                # print("----size and type of the QUANTIZED tensor")
+                # print(one_bit(param.grad.data).type(torch.bool).size())
+                # print(one_bit(param.grad.data).type(torch.bool).dtype)
+                # print("size and type of the QUANTIZED tensor----")
                 # TODO multiply the entries of each tensor and add together to see how many bytes are being communicated
-                torch.distributed.all_reduce(quantize(param.grad.data), op=torch.distributed.ReduceOp.SUM)
+                torch.distributed.all_reduce(one_bit(param.grad.data).type(torch.bool), op=torch.distributed.ReduceOp.SUM)
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
             current_comm_time = time.time() - start_comm_time
