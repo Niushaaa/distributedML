@@ -156,6 +156,11 @@ def train(args, train_dataset, model, tokenizer):
             start_comm_time = time.time()
             # Gradient synchronization
             for i, param in enumerate(model.parameters()):
+                # print the tensor size and type
+                print("----size and type of the tensor")
+                print(param.grad.data.size())
+                print(param.grad.data.dtype)
+                print("size and type of the tensor----")
                 torch.distributed.all_reduce(quantize(param.grad.data), op=torch.distributed.ReduceOp.SUM)
                 
             torch.distributed.barrier()  # Make sure all processes have received averaged gradients before continuing
